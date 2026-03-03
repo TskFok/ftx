@@ -1073,7 +1073,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ftp-tool"
+name = "ftx-tool"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",

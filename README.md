@@ -1,4 +1,4 @@
-# FTP
+# ftx
 
 基于 Tauri 2 + React 19 + TypeScript 构建的跨平台 FTP/SFTP 桌面客户端。
 
@@ -75,7 +75,7 @@ npm run tauri build
 ## 项目结构
 
 ```
-ftp/
+ftx/
 ├── src/                    # React 前端
 │   ├── components/         # UI 组件
 │   │   ├── FileBrowser/    # 双面板文件浏览

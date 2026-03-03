@@ -44,7 +44,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({ sidebar, children }) => {
             height: 48,
           }}
         >
-          <h3 style={{ margin: 0 }}>FTP/SFTP 文件传输工具</h3>
+          <h3 style={{ margin: 0 }}>ftx - FTP/SFTP 文件传输工具</h3>
         </Header>
         <Content style={{ padding: 16, overflow: "auto" }}>{children}</Content>
       </AntLayout>

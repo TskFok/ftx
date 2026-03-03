@@ -75,12 +75,12 @@ mod tests {
 
     #[test]
     fn test_normalize_and_validate_exists() {
-        let temp = std::env::temp_dir().join("ftp_test_normalize_exists");
+        let temp = std::env::temp_dir().join("ftx_test_normalize_exists");
         let _ = fs::remove_dir_all(&temp);
         fs::create_dir_all(&temp).unwrap();
 
         let result = normalize_and_validate(temp.to_string_lossy().as_ref()).unwrap();
-        assert!(result.ends_with("ftp_test_normalize_exists"));
+        assert!(result.ends_with("ftx_test_normalize_exists"));
 
         let _ = fs::remove_dir_all(&temp);
     }
@@ -99,7 +99,7 @@ mod tests {
 
     #[test]
     fn test_normalize_and_validate_traversal() {
-        let temp = std::env::temp_dir().join("ftp_test_normalize_traversal");
+        let temp = std::env::temp_dir().join("ftx_test_normalize_traversal");
         let _ = fs::remove_dir_all(&temp);
         fs::create_dir_all(temp.join("sub")).unwrap();
 
@@ -129,19 +129,19 @@ mod tests {
 
     #[test]
     fn test_normalize_path_for_create_existing() {
-        let temp = std::env::temp_dir().join("ftp_test_create_existing");
+        let temp = std::env::temp_dir().join("ftx_test_create_existing");
         let _ = fs::remove_dir_all(&temp);
         fs::create_dir_all(&temp).unwrap();
 
         let result = normalize_path_for_create(temp.to_string_lossy().as_ref()).unwrap();
-        assert!(result.ends_with("ftp_test_create_existing"));
+        assert!(result.ends_with("ftx_test_create_existing"));
 
         let _ = fs::remove_dir_all(&temp);
     }
 
     #[test]
     fn test_normalize_path_for_create_new() {
-        let temp = std::env::temp_dir().join("ftp_test_create_new");
+        let temp = std::env::temp_dir().join("ftx_test_create_new");
         let _ = fs::remove_dir_all(&temp);
         fs::create_dir_all(&temp).unwrap();
 
@@ -154,9 +154,9 @@ mod tests {
 
     #[test]
     fn test_safe_join() {
-        let base = PathBuf::from("/tmp/ftp_test");
+        let base = PathBuf::from("/tmp/ftx_test");
         let result = safe_join(&base, "file.txt").unwrap();
-        assert_eq!(result, PathBuf::from("/tmp/ftp_test/file.txt"));
+        assert_eq!(result, PathBuf::from("/tmp/ftx_test/file.txt"));
 
         assert!(safe_join(&base, "../etc").is_err());
         assert!(safe_join(&base, "..").is_err());

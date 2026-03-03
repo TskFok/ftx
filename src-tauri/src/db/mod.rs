@@ -17,7 +17,7 @@ pub struct Database {
 impl Database {
     pub fn new(app_data_dir: PathBuf) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         std::fs::create_dir_all(&app_data_dir).ok();
-        let db_path = app_data_dir.join("ftp_tool.db");
+        let db_path = app_data_dir.join("ftx_tool.db");
         let conn = Connection::open(&db_path)?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
         let encryption_key = crypto::load_or_create_key(&app_data_dir).ok();

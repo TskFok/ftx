@@ -53,7 +53,7 @@ mod tests {
 
     #[test]
     fn test_list_local_dir() {
-        let temp = std::env::temp_dir().join("ftp_test_list_local");
+        let temp = std::env::temp_dir().join("ftx_test_list_local");
         let _ = fs::remove_dir_all(&temp);
         fs::create_dir_all(&temp).unwrap();
         fs::write(temp.join("a.txt"), "hello").unwrap();

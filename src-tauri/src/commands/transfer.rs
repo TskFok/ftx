@@ -315,7 +315,7 @@ mod tests {
 
     #[test]
     fn test_collect_local_dir_entries_flat() {
-        let temp = std::env::temp_dir().join("ftp_test_dir_collect_flat");
+        let temp = std::env::temp_dir().join("ftx_test_dir_collect_flat");
         let _ = std::fs::remove_dir_all(&temp);
         std::fs::create_dir_all(&temp).unwrap();
         std::fs::write(temp.join("a.txt"), "hello").unwrap();
@@ -336,7 +336,7 @@ mod tests {
 
     #[test]
     fn test_collect_local_dir_entries_nested() {
-        let temp = std::env::temp_dir().join("ftp_test_dir_collect_nested");
+        let temp = std::env::temp_dir().join("ftx_test_dir_collect_nested");
         let _ = std::fs::remove_dir_all(&temp);
         std::fs::create_dir_all(temp.join("sub1/sub2")).unwrap();
         std::fs::write(temp.join("root.txt"), "root").unwrap();
@@ -362,7 +362,7 @@ mod tests {
 
     #[test]
     fn test_collect_local_dir_entries_empty() {
-        let temp = std::env::temp_dir().join("ftp_test_dir_collect_empty");
+        let temp = std::env::temp_dir().join("ftx_test_dir_collect_empty");
         let _ = std::fs::remove_dir_all(&temp);
         std::fs::create_dir_all(&temp).unwrap();
 
@@ -378,7 +378,7 @@ mod tests {
 
     #[test]
     fn test_collect_local_dir_entries_trailing_slash() {
-        let temp = std::env::temp_dir().join("ftp_test_dir_collect_slash");
+        let temp = std::env::temp_dir().join("ftx_test_dir_collect_slash");
         let _ = std::fs::remove_dir_all(&temp);
         std::fs::create_dir_all(&temp).unwrap();
         std::fs::write(temp.join("f.txt"), "data").unwrap();

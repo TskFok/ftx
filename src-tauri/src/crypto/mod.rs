@@ -55,7 +55,7 @@ pub fn decrypt(encoded: &str, key: &[u8; 32]) -> Result<String, String> {
 /// 从应用数据目录加载或创建加密密钥
 pub fn load_or_create_key(app_data_dir: &std::path::Path) -> Result<[u8; 32], String> {
     std::fs::create_dir_all(app_data_dir).map_err(|e| e.to_string())?;
-    let key_path = app_data_dir.join(".ftp_encryption_key");
+    let key_path = app_data_dir.join(".ftx_encryption_key");
     if key_path.exists() {
         let bytes = std::fs::read(&key_path).map_err(|e| format!("读取密钥失败: {}", e))?;
         let arr: [u8; 32] = bytes
