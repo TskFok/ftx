@@ -37,7 +37,12 @@ pub fn run() {
                 .expect("Failed to initialize database");
             let db_arc = Arc::new(database);
 
-            let conn_manager = ConnectionManager::new();
+            let idle_timeout = {
+                let conn = db_arc.conn.lock().unwrap();
+                db::settings_repo::get_idle_timeout_secs(&conn)
+                    .unwrap_or(services::connection::DEFAULT_IDLE_TIMEOUT_SECS)
+            };
+            let conn_manager = ConnectionManager::with_idle_timeout(idle_timeout);
             let engine = TransferEngine::new(conn_manager.clone(), db_arc.clone());
             engine.set_app_handle(app.handle().clone());
 
@@ -82,6 +87,8 @@ pub fn run() {
             commands::connection::rename_remote,
             commands::connection::remote_file_exists,
             commands::connection::remote_file_size,
+            commands::settings::get_idle_timeout_secs,
+            commands::settings::set_idle_timeout_secs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

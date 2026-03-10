@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use crate::models::host::{Host, Protocol};
 
@@ -8,6 +10,37 @@ use super::ftp_client::FtpClient;
 use super::sftp_client::SftpClient;
 
 pub const CHUNK_SIZE: usize = 32768;
+
+/// 默认空闲超时时间（秒），超过此时间未使用的连接将被断开
+pub const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 300;
+
+/// 包装连接，在释放时更新最后活动时间
+pub struct ConnectionGuard {
+    client: Arc<Mutex<Box<dyn ConnectionTrait>>>,
+    last_activity: Arc<Mutex<Instant>>,
+}
+
+impl ConnectionGuard {
+    fn new(client: Arc<Mutex<Box<dyn ConnectionTrait>>>, last_activity: Arc<Mutex<Instant>>) -> Self {
+        *last_activity.lock().unwrap() = Instant::now();
+        Self { client, last_activity }
+    }
+}
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        if let Ok(mut last) = self.last_activity.lock() {
+            *last = Instant::now();
+        }
+    }
+}
+
+impl std::ops::Deref for ConnectionGuard {
+    type Target = Arc<Mutex<Box<dyn ConnectionTrait>>>;
+    fn deref(&self) -> &Self::Target {
+        &self.client
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileEntry {
@@ -71,18 +104,38 @@ fn create_client(host: &Host) -> Box<dyn ConnectionTrait> {
     }
 }
 
+struct ConnectionEntry {
+    client: Arc<Mutex<Box<dyn ConnectionTrait>>>,
+    last_activity: Arc<Mutex<Instant>>,
+}
+
 /// Thread-safe connection pool that manages active FTP/SFTP connections keyed by host ID.
 /// Each connection is independently locked so operations on different hosts don't block each other.
+/// Connections are automatically disconnected when idle for longer than idle_timeout_secs.
 #[derive(Clone)]
 pub struct ConnectionManager {
-    connections: Arc<Mutex<HashMap<i64, Arc<Mutex<Box<dyn ConnectionTrait>>>>>>,
+    connections: Arc<Mutex<HashMap<i64, ConnectionEntry>>>,
+    idle_timeout_secs: Arc<AtomicU64>,
 }
 
 impl ConnectionManager {
     pub fn new() -> Self {
+        Self::with_idle_timeout(DEFAULT_IDLE_TIMEOUT_SECS)
+    }
+
+    pub fn with_idle_timeout(idle_timeout_secs: u64) -> Self {
         Self {
             connections: Arc::new(Mutex::new(HashMap::new())),
+            idle_timeout_secs: Arc::new(AtomicU64::new(idle_timeout_secs)),
         }
+    }
+
+    pub fn set_idle_timeout(&self, secs: u64) {
+        self.idle_timeout_secs.store(secs, Ordering::Relaxed);
+    }
+
+    pub fn idle_timeout_secs(&self) -> u64 {
+        self.idle_timeout_secs.load(Ordering::Relaxed)
     }
 
     pub fn connect(&self, host: &Host) -> Result<(), String> {
@@ -99,30 +152,53 @@ impl ConnectionManager {
         client.connect()?;
 
         let mut conns = self.connections.lock().map_err(|e| e.to_string())?;
-        conns.insert(host_id, Arc::new(Mutex::new(client)));
+        conns.insert(
+            host_id,
+            ConnectionEntry {
+                client: Arc::new(Mutex::new(client)),
+                last_activity: Arc::new(Mutex::new(Instant::now())),
+            },
+        );
         Ok(())
     }
 
     pub fn disconnect(&self, host_id: i64) -> Result<(), String> {
-        let client = {
+        let entry = {
             let mut conns = self.connections.lock().map_err(|e| e.to_string())?;
             conns.remove(&host_id)
         };
-        if let Some(client) = client {
-            let mut client = client.lock().map_err(|e| e.to_string())?;
+        if let Some(entry) = entry {
+            let mut client = entry.client.lock().map_err(|e| e.to_string())?;
             client.disconnect()?;
         }
         Ok(())
     }
 
-    pub fn get_connection(
-        &self,
-        host_id: i64,
-    ) -> Result<Arc<Mutex<Box<dyn ConnectionTrait>>>, String> {
-        let conns = self.connections.lock().map_err(|e| e.to_string())?;
-        conns.get(&host_id)
-            .cloned()
-            .ok_or_else(|| format!("No active connection for host {}", host_id))
+    pub fn get_connection(&self, host_id: i64) -> Result<ConnectionGuard, String> {
+        let timeout_secs = self.idle_timeout_secs.load(Ordering::Relaxed)
+            as u128;
+
+        let mut conns = self.connections.lock().map_err(|e| e.to_string())?;
+        let entry = conns
+            .get_mut(&host_id)
+            .ok_or_else(|| format!("No active connection for host {}", host_id))?;
+
+        let idle_secs = entry.last_activity.lock().unwrap().elapsed().as_secs() as u128;
+        if timeout_secs > 0 && idle_secs >= timeout_secs {
+            let entry = conns.remove(&host_id).unwrap();
+            drop(conns);
+            let mut client = entry.client.lock().map_err(|e| e.to_string())?;
+            let _ = client.disconnect();
+            return Err(format!(
+                "Connection closed due to idle timeout ({} seconds)",
+                timeout_secs
+            ));
+        }
+
+        Ok(ConnectionGuard::new(
+            entry.client.clone(),
+            entry.last_activity.clone(),
+        ))
     }
 
     pub fn is_connected(&self, host_id: i64) -> bool {
@@ -141,12 +217,12 @@ impl ConnectionManager {
     }
 
     pub fn disconnect_all(&self) -> Result<(), String> {
-        let clients: Vec<_> = {
+        let entries: Vec<_> = {
             let mut conns = self.connections.lock().map_err(|e| e.to_string())?;
             conns.drain().collect()
         };
-        for (_, client) in clients {
-            if let Ok(mut client) = client.lock() {
+        for (_, entry) in entries {
+            if let Ok(mut client) = entry.client.lock() {
                 let _ = client.disconnect();
             }
         }
@@ -165,7 +241,13 @@ impl ConnectionManager {
         client: Box<dyn ConnectionTrait>,
     ) -> Result<(), String> {
         let mut conns = self.connections.lock().map_err(|e| e.to_string())?;
-        conns.insert(host_id, Arc::new(Mutex::new(client)));
+        conns.insert(
+            host_id,
+            ConnectionEntry {
+                client: Arc::new(Mutex::new(client)),
+                last_activity: Arc::new(Mutex::new(Instant::now())),
+            },
+        );
         Ok(())
     }
 }
@@ -425,6 +507,44 @@ mod tests {
         };
         let client = create_client(&host);
         assert!(!client.is_connected());
+    }
+
+    #[test]
+    fn test_idle_timeout_disconnects() {
+        use std::thread;
+        use std::time::Duration;
+
+        let manager = ConnectionManager::with_idle_timeout(1);
+        manager
+            .insert_mock_connection(1, Box::new(MockClient::new(false)))
+            .unwrap();
+
+        let conn = manager.get_connection(1).unwrap();
+        drop(conn);
+        thread::sleep(Duration::from_secs(2));
+
+        let result = manager.get_connection(1);
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert!(err.contains("idle timeout"));
+    }
+
+    #[test]
+    fn test_idle_timeout_zero_disables() {
+        use std::thread;
+        use std::time::Duration;
+
+        let manager = ConnectionManager::with_idle_timeout(0);
+        manager
+            .insert_mock_connection(1, Box::new(MockClient::new(false)))
+            .unwrap();
+
+        let conn = manager.get_connection(1).unwrap();
+        drop(conn);
+        thread::sleep(Duration::from_millis(100));
+
+        let conn = manager.get_connection(1);
+        assert!(conn.is_ok());
     }
 
     #[test]

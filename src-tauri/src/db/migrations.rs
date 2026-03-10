@@ -7,6 +7,7 @@ pub fn run_all(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(schema::CREATE_TRANSFER_HISTORY_TABLE)?;
     conn.execute_batch(schema::CREATE_DIRECTORY_BOOKMARKS_TABLE)?;
     conn.execute_batch(schema::CREATE_RESUME_RECORDS_TABLE)?;
+    conn.execute_batch(schema::CREATE_SETTINGS_TABLE)?;
     conn.execute_batch(schema::CREATE_INDICES)?;
     Ok(())
 }
@@ -32,6 +33,7 @@ mod tests {
         assert!(tables.contains(&"transfer_history".to_string()));
         assert!(tables.contains(&"directory_bookmarks".to_string()));
         assert!(tables.contains(&"resume_records".to_string()));
+        assert!(tables.contains(&"settings".to_string()));
     }
 
     #[test]

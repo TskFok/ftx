@@ -100,6 +100,46 @@ describe("fileBrowserStore", () => {
         path: "/home",
       });
     });
+
+    it("连接断开错误时清除连接状态", async () => {
+      useFileBrowserStore.setState({
+        connectedHostId: 1,
+        remoteFiles: sampleRemoteFiles,
+        remotePath: "/var",
+      });
+      mockInvoke.mockRejectedValueOnce(
+        new Error("Connection closed due to idle timeout (300 seconds)"),
+      );
+
+      await expect(
+        useFileBrowserStore.getState().fetchRemoteFiles(1, "/var"),
+      ).rejects.toThrow();
+
+      const state = useFileBrowserStore.getState();
+      expect(state.connectedHostId).toBeNull();
+      expect(state.remoteFiles).toEqual([]);
+      expect(state.remotePath).toBe("/");
+      expect(state.selectedRemoteFiles).toEqual([]);
+    });
+  });
+
+  describe("clearConnectionState", () => {
+    it("清除连接相关状态", () => {
+      useFileBrowserStore.setState({
+        connectedHostId: 1,
+        remoteFiles: sampleRemoteFiles,
+        remotePath: "/var",
+        selectedRemoteFiles: ["/var/a.txt"],
+      });
+
+      useFileBrowserStore.getState().clearConnectionState();
+
+      const state = useFileBrowserStore.getState();
+      expect(state.connectedHostId).toBeNull();
+      expect(state.remoteFiles).toEqual([]);
+      expect(state.remotePath).toBe("/");
+      expect(state.selectedRemoteFiles).toEqual([]);
+    });
   });
 
   describe("selection", () => {

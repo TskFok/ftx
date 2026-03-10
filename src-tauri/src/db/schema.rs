@@ -55,6 +55,12 @@ CREATE TABLE IF NOT EXISTS resume_records (
     FOREIGN KEY (host_id) REFERENCES hosts(id) ON DELETE CASCADE
 )";
 
+pub const CREATE_SETTINGS_TABLE: &str = "
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+)";
+
 pub const CREATE_INDICES: &str = "
 CREATE INDEX IF NOT EXISTS idx_transfer_history_host_id ON transfer_history(host_id);
 CREATE INDEX IF NOT EXISTS idx_transfer_history_status ON transfer_history(status);

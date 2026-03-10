@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useFileBrowserStore } from "../../stores/fileBrowserStore";
 import { useTransferStore } from "../../stores/transferStore";
 import { useOverwriteStore } from "../../stores/overwriteStore";
+import { isConnectionError } from "../../utils/connectionError";
 
 const TransferActionBar: React.FC = () => {
   const {
@@ -15,6 +16,7 @@ const TransferActionBar: React.FC = () => {
     connectedHostId,
     remotePath,
     localPath,
+    clearConnectionState,
   } = useFileBrowserStore();
   const startUpload = useTransferStore((s) => s.startUpload);
   const startDownload = useTransferStore((s) => s.startDownload);
@@ -24,6 +26,15 @@ const TransferActionBar: React.FC = () => {
   );
   const showDialog = useOverwriteStore((s) => s.showDialog);
   const resetOverwriteAll = useOverwriteStore((s) => s.resetOverwriteAll);
+
+  const handleConnectionError = useCallback(
+    (err: unknown) => {
+      if (isConnectionError(err)) {
+        clearConnectionState();
+      }
+    },
+    [clearConnectionState],
+  );
 
   const handleUpload = useCallback(async () => {
     if (!connectedHostId) {
@@ -60,6 +71,7 @@ const TransferActionBar: React.FC = () => {
         );
         message.info(`目录 ${dir.name} 已加入上传队列（${ids.length} 个文件）`);
       } catch (err) {
+        handleConnectionError(err);
         message.error(`上传目录 ${dir.name} 失败: ${err}`);
       }
     }
@@ -114,11 +126,13 @@ const TransferActionBar: React.FC = () => {
           file.size,
         );
       } catch (err) {
+        handleConnectionError(err);
         message.error(`上传 ${file.name} 失败: ${err}`);
       }
     }
   }, [
     connectedHostId,
+    handleConnectionError,
     selectedLocalFiles,
     localFiles,
     remotePath,
@@ -165,6 +179,7 @@ const TransferActionBar: React.FC = () => {
         );
         message.info(`目录 ${dir.name} 已加入下载队列（${ids.length} 个文件）`);
       } catch (err) {
+        handleConnectionError(err);
         message.error(`下载目录 ${dir.name} 失败: ${err}`);
       }
     }
@@ -218,11 +233,13 @@ const TransferActionBar: React.FC = () => {
           file.size,
         );
       } catch (err) {
+        handleConnectionError(err);
         message.error(`下载 ${file.name} 失败: ${err}`);
       }
     }
   }, [
     connectedHostId,
+    handleConnectionError,
     selectedRemoteFiles,
     remoteFiles,
     localPath,

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import type { FileEntry } from "../types";
+import { isConnectionError } from "../utils/connectionError";
 
 interface FileBrowserState {
   localPath: string;
@@ -16,6 +17,7 @@ interface FileBrowserState {
   setLocalPath: (path: string) => void;
   setRemotePath: (path: string) => void;
   setConnectedHostId: (id: number | null) => void;
+  clearConnectionState: () => void;
   fetchLocalFiles: (path?: string) => Promise<void>;
   fetchRemoteFiles: (hostId: number, path?: string) => Promise<void>;
   setRemoteFiles: (files: FileEntry[]) => void;
@@ -39,6 +41,13 @@ export const useFileBrowserStore = create<FileBrowserState>((set, get) => ({
   setLocalPath: (path) => set({ localPath: path }),
   setRemotePath: (path) => set({ remotePath: path }),
   setConnectedHostId: (id) => set({ connectedHostId: id }),
+  clearConnectionState: () =>
+    set({
+      connectedHostId: null,
+      remoteFiles: [],
+      remotePath: "/",
+      selectedRemoteFiles: [],
+    }),
 
   fetchLocalFiles: async (path?: string) => {
     const targetPath = path ?? get().localPath;
@@ -67,6 +76,11 @@ export const useFileBrowserStore = create<FileBrowserState>((set, get) => ({
         connectedHostId: hostId,
         selectedRemoteFiles: [],
       });
+    } catch (err) {
+      if (isConnectionError(err)) {
+        get().clearConnectionState();
+      }
+      throw err;
     } finally {
       set({ remoteLoading: false });
     }

@@ -1,6 +1,7 @@
 pub mod bookmark_repo;
 pub mod host_repo;
 pub mod migrations;
+pub mod settings_repo;
 pub mod schema;
 pub mod transfer_repo;
 
@@ -85,6 +86,7 @@ mod tests {
         assert!(tables.contains(&"transfer_history".to_string()));
         assert!(tables.contains(&"directory_bookmarks".to_string()));
         assert!(tables.contains(&"resume_records".to_string()));
+        assert!(tables.contains(&"settings".to_string()));
     }
 
     #[test]

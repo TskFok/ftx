@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { message } from "antd";
 import { useFileBrowserStore } from "../stores/fileBrowserStore";
 
 export function useFileBrowser() {
@@ -21,7 +22,7 @@ export function useFileBrowser() {
     setSelectedLocalFiles,
     setSelectedRemoteFiles,
     refreshLocal,
-    refreshRemote,
+    refreshRemote: storeRefreshRemote,
   } = useFileBrowserStore();
 
   const navigateLocal = useCallback(
@@ -41,7 +42,11 @@ export function useFileBrowser() {
     async (path: string) => {
       if (!connectedHostId) return;
       setRemotePath(path);
-      await fetchRemoteFiles(connectedHostId, path);
+      try {
+        await fetchRemoteFiles(connectedHostId, path);
+      } catch (err) {
+        message.error(`加载失败: ${err}`);
+      }
     },
     [connectedHostId, setRemotePath, fetchRemoteFiles],
   );
@@ -74,6 +79,14 @@ export function useFileBrowser() {
     },
     [connectedHostId, setConnectedHostId, fetchRemoteFiles]
   );
+
+  const refreshRemote = useCallback(async () => {
+    try {
+      await storeRefreshRemote();
+    } catch (err) {
+      message.error(`刷新失败: ${err}`);
+    }
+  }, [storeRefreshRemote]);
 
   const disconnectHost = useCallback(async () => {
     if (!connectedHostId) return;

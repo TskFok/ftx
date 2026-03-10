@@ -11,6 +11,8 @@ import { invoke } from "@tauri-apps/api/core";
 import type { FileEntry } from "../../types";
 import PathBreadcrumb from "./PathBreadcrumb";
 import FileTable from "./FileTable";
+import { useFileBrowserStore } from "../../stores/fileBrowserStore";
+import { isConnectionError } from "../../utils/connectionError";
 
 interface FilePanelProps {
   title: string;
@@ -43,6 +45,18 @@ const FilePanel: React.FC<FilePanelProps> = ({
 }) => {
   const [mkdirVisible, setMkdirVisible] = useState(false);
   const [newDirName, setNewDirName] = useState("");
+  const clearConnectionState = useFileBrowserStore(
+    (s) => s.clearConnectionState,
+  );
+
+  const handleConnectionError = useCallback(
+    (err: unknown) => {
+      if (isConnectionError(err)) {
+        clearConnectionState();
+      }
+    },
+    [clearConnectionState],
+  );
 
   const handleCreateDir = useCallback(async () => {
     if (!newDirName.trim()) return;
@@ -64,9 +78,10 @@ const FilePanel: React.FC<FilePanelProps> = ({
       setNewDirName("");
       onRefresh();
     } catch (err) {
+      handleConnectionError(err);
       message.error(`创建失败: ${err}`);
     }
-  }, [newDirName, path, mode, hostId, onRefresh]);
+  }, [newDirName, path, mode, hostId, onRefresh, handleConnectionError]);
 
   const handleDelete = useCallback(
     async (file: FileEntry) => {
@@ -83,10 +98,11 @@ const FilePanel: React.FC<FilePanelProps> = ({
         message.success(`已删除 ${file.name}`);
         onRefresh();
       } catch (err) {
+        handleConnectionError(err);
         message.error(`删除失败: ${err}`);
       }
     },
-    [mode, hostId, onRefresh],
+    [mode, hostId, onRefresh, handleConnectionError],
   );
 
   const handleRename = useCallback(
@@ -110,10 +126,11 @@ const FilePanel: React.FC<FilePanelProps> = ({
         message.success("重命名成功");
         onRefresh();
       } catch (err) {
+        handleConnectionError(err);
         message.error(`重命名失败: ${err}`);
       }
     },
-    [mode, hostId, onRefresh],
+    [mode, hostId, onRefresh, handleConnectionError],
   );
 
   const handleBatchDelete = useCallback(async () => {
