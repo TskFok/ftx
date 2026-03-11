@@ -148,7 +148,8 @@ const HostManager: React.FC = () => {
     <div
       style={{
         padding: 8,
-        height: "100%",
+        flex: 1,
+        minHeight: 0,
         display: "flex",
         flexDirection: "column",
       }}

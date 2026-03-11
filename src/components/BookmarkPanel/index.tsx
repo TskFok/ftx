@@ -55,6 +55,10 @@ const BookmarkPanel: React.FC = () => {
         padding: 8,
         borderTop: "1px solid #f0f0f0",
         flexShrink: 0,
+        height: "50vh",
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
       }}
     >
       <div
@@ -63,12 +67,13 @@ const BookmarkPanel: React.FC = () => {
           justifyContent: "space-between",
           alignItems: "center",
           marginBottom: 8,
+          flexShrink: 0,
         }}
       >
         <Text strong>收藏的目录</Text>
       </div>
 
-      <div style={{ maxHeight: 160, overflow: "auto" }}>
+      <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
         <List
           loading={loading}
           dataSource={bookmarks}
