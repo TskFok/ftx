@@ -1,8 +1,7 @@
 //! Host 输入校验，防止超长字符串、非法字符、路径遍历
 
 use crate::models::host::Host;
-use crate::utils::path::{normalize_and_validate, normalize_path_for_create};
-use std::path::Path;
+use crate::utils::path::{expand_tilde_path, normalize_and_validate, normalize_path_for_create};
 
 const MAX_NAME_LEN: usize = 128;
 const MAX_HOST_LEN: usize = 256;
@@ -101,14 +100,15 @@ fn validate_key_path(key_path: &str) -> Result<(), String> {
     if trimmed.contains("..") {
         return Err("密钥路径不允许包含 ..".to_string());
     }
-    let p = Path::new(trimmed);
-    if !p.is_absolute() {
+    let expanded = expand_tilde_path(trimmed)?;
+    if !expanded.is_absolute() {
         return Err("密钥路径必须为绝对路径".to_string());
     }
-    if p.exists() {
-        normalize_and_validate(trimmed)?;
+    let expanded_str = expanded.to_string_lossy();
+    if expanded.exists() {
+        normalize_and_validate(expanded_str.as_ref())?;
     } else {
-        normalize_path_for_create(trimmed)?;
+        normalize_path_for_create(expanded_str.as_ref())?;
     }
     Ok(())
 }
@@ -187,5 +187,12 @@ mod tests {
         let mut h = valid_host();
         h.key_path = Some("/home/user/.ssh/../../../etc/passwd".into());
         assert!(validate_host(&h).is_err());
+    }
+
+    #[test]
+    fn test_validate_key_path_tilde_under_home_nonexistent() {
+        let mut h = valid_host();
+        h.key_path = Some("~/ftx_validate_key_path_nonexistent_xyz123".into());
+        assert!(validate_host(&h).is_ok());
     }
 }

@@ -2,6 +2,26 @@
 
 use std::path::{Path, PathBuf};
 
+/// 将路径开头的 `~/`（及 Windows 下的 `~\`）或单独的 `~` 展开为用户主目录。
+pub fn expand_tilde_path(path: &str) -> Result<PathBuf, String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("路径不能为空".to_string());
+    }
+    let home = || dirs::home_dir().ok_or_else(|| "无法获取用户主目录".to_string());
+    if path == "~" {
+        return home();
+    }
+    if path.starts_with("~/") {
+        return Ok(home()?.join(&path[2..]));
+    }
+    #[cfg(windows)]
+    if path.starts_with("~\\") {
+        return Ok(home()?.join(&path[2..]));
+    }
+    Ok(PathBuf::from(path))
+}
+
 /// 规范化并校验路径（用于读取操作，路径必须存在）
 pub fn normalize_and_validate(path: &str) -> Result<PathBuf, String> {
     let path = path.trim();
@@ -72,6 +92,38 @@ pub fn safe_join(base: &PathBuf, name: &str) -> Result<PathBuf, String> {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn test_expand_tilde_path_home_prefix() {
+        let home = dirs::home_dir().expect("home dir");
+        assert_eq!(expand_tilde_path("~").unwrap(), home);
+        assert_eq!(expand_tilde_path("~/").unwrap(), home);
+        assert_eq!(
+            expand_tilde_path("~/Documents").unwrap(),
+            home.join("Documents")
+        );
+        #[cfg(windows)]
+        assert_eq!(
+            expand_tilde_path(r"~\Documents").unwrap(),
+            home.join("Documents")
+        );
+    }
+
+    #[test]
+    fn test_expand_tilde_path_absolute_unchanged() {
+        let p = if cfg!(windows) {
+            r"C:\absolute\id_rsa"
+        } else {
+            "/absolute/id_rsa"
+        };
+        assert_eq!(expand_tilde_path(p).unwrap(), PathBuf::from(p));
+    }
+
+    #[test]
+    fn test_expand_tilde_path_empty_err() {
+        assert!(expand_tilde_path("").is_err());
+        assert!(expand_tilde_path("   ").is_err());
+    }
 
     #[test]
     fn test_normalize_and_validate_exists() {
