@@ -22,9 +22,6 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# SFTP 使用 russh（纯 Rust SSH），避免 libssh2 + Windows WINCNG 的 KEX 失败（Session -5）；无需 Perl 编 OpenSSL。
-russh = { version = "0.58", default-features = false, features = ["ring", "flate2", "rsa"] }
-russh-sftp = "2.1"
 suppaftp = { version = "6", features = ["native-tls"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 tokio = { version = "1", features = ["full"] }
@@ -34,6 +31,11 @@ aes-gcm = "0.10"
 base64 = "0.22"
 rand = "0.8"
 dirs = "5"
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+# Windows/Linux：纯 Rust SSH/SFTP，避免部分环境下 WINCNG 等问题。macOS 使用系统 OpenSSH（见 sftp_client/openssh.rs）。
+russh = { version = "0.58", default-features = false, features = ["ring", "flate2", "rsa"] }
+russh-sftp = "2.1"
 
 [dev-dependencies]
 tempfile = "3"
