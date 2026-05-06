@@ -119,6 +119,15 @@ const TransferActionBar: React.FC = () => {
             );
             continue;
           }
+          // 覆盖：仅一次上传，避免与下方 startUpload 重复触发并发任务
+          await startUpload(
+            connectedHostId,
+            file.path,
+            remoteFilePath,
+            file.name,
+            file.size,
+          );
+          continue;
         }
 
         await startUpload(
@@ -227,6 +236,14 @@ const TransferActionBar: React.FC = () => {
             );
             continue;
           }
+          await startDownload(
+            connectedHostId,
+            file.path,
+            localFilePath,
+            file.name,
+            file.size,
+          );
+          continue;
         }
 
         await startDownload(

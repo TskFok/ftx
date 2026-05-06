@@ -70,6 +70,76 @@ describe("fileBrowserStore", () => {
       ).rejects.toThrow();
       expect(useFileBrowserStore.getState().localLoading).toBe(false);
     });
+
+    it("较晚返回的旧 list_local 结果不覆盖当前目录", async () => {
+      let resolveSlow!: (v: FileEntry[]) => void;
+      const slowPromise = new Promise<FileEntry[]>((r) => {
+        resolveSlow = r;
+      });
+      const fastFiles: FileEntry[] = [
+        { name: "n.txt", path: "/proj/n.txt", is_dir: false, size: 1 },
+      ];
+
+      mockInvoke.mockImplementation((cmd, args) => {
+        if (
+          cmd === "list_local_dir" &&
+          args &&
+          typeof args === "object" &&
+          "path" in args &&
+          args.path === "/slow_home"
+        ) {
+          return slowPromise;
+        }
+        if (cmd === "list_local_dir") {
+          return Promise.resolve(fastFiles);
+        }
+        return Promise.resolve([]);
+      });
+
+      const pSlow = useFileBrowserStore.getState().fetchLocalFiles("/slow_home");
+      await useFileBrowserStore.getState().fetchLocalFiles("/proj");
+
+      resolveSlow([
+        {
+          name: "stale.txt",
+          path: "/slow_home/stale.txt",
+          is_dir: false,
+          size: 2,
+        },
+      ]);
+      await pSlow;
+
+      const state = useFileBrowserStore.getState();
+      expect(state.localPath).toBe("/proj");
+      expect(state.localFiles).toEqual(fastFiles);
+      expect(state.localLoading).toBe(false);
+    });
+
+    it("已被更新的 list_local 请求失败时不抛出", async () => {
+      let rejectSlow!: (e: Error) => void;
+      const slowPromise = new Promise<FileEntry[]>((_, rej) => {
+        rejectSlow = rej;
+      });
+      mockInvoke.mockImplementation((cmd, args) => {
+        if (
+          cmd === "list_local_dir" &&
+          args &&
+          typeof args === "object" &&
+          "path" in args &&
+          args.path === "/slow_home"
+        ) {
+          return slowPromise;
+        }
+        return Promise.resolve([]);
+      });
+
+      const pSlow = useFileBrowserStore.getState().fetchLocalFiles("/slow_home");
+      await useFileBrowserStore.getState().fetchLocalFiles("/ok");
+
+      rejectSlow(new Error("stale should be ignored"));
+      await expect(pSlow).resolves.toBeUndefined();
+      expect(useFileBrowserStore.getState().localPath).toBe("/ok");
+    });
   });
 
   describe("fetchRemoteFiles", () => {
@@ -99,6 +169,78 @@ describe("fileBrowserStore", () => {
         hostId: 2,
         path: "/home",
       });
+    });
+
+    it("较晚返回的旧 list_remote 结果不覆盖当前远程目录", async () => {
+      let resolveSlow!: (v: FileEntry[]) => void;
+      const slowPromise = new Promise<FileEntry[]>((r) => {
+        resolveSlow = r;
+      });
+      const fastFiles: FileEntry[] = [
+        { name: "b.txt", path: "/srv/b.txt", is_dir: false, size: 3 },
+      ];
+
+      mockInvoke.mockImplementation((cmd, args) => {
+        if (
+          cmd === "list_remote_dir" &&
+          args &&
+          typeof args === "object" &&
+          "path" in args &&
+          args.path === "/slow_remote"
+        ) {
+          return slowPromise;
+        }
+        if (cmd === "list_remote_dir") {
+          return Promise.resolve(fastFiles);
+        }
+        return Promise.resolve([]);
+      });
+
+      const pSlow = useFileBrowserStore
+        .getState()
+        .fetchRemoteFiles(1, "/slow_remote");
+      await useFileBrowserStore.getState().fetchRemoteFiles(1, "/srv");
+
+      resolveSlow(sampleRemoteFiles);
+      await pSlow;
+
+      const state = useFileBrowserStore.getState();
+      expect(state.remotePath).toBe("/srv");
+      expect(state.remoteFiles).toEqual(fastFiles);
+      expect(state.connectedHostId).toBe(1);
+    });
+
+    it("已被覆盖的 list_remote 若失败为连接错误也不清除连接状态", async () => {
+      let rejectSlow!: (e: Error) => void;
+      const slowPromise = new Promise<FileEntry[]>((_, rej) => {
+        rejectSlow = rej;
+      });
+      mockInvoke.mockImplementation((cmd, args) => {
+        if (
+          cmd === "list_remote_dir" &&
+          args &&
+          typeof args === "object" &&
+          "path" in args &&
+          args.path === "/slow_remote"
+        ) {
+          return slowPromise;
+        }
+        return Promise.resolve([]);
+      });
+
+      useFileBrowserStore.setState({ connectedHostId: 1 });
+      const pSlow = useFileBrowserStore
+        .getState()
+        .fetchRemoteFiles(1, "/slow_remote");
+      await useFileBrowserStore.getState().fetchRemoteFiles(1, "/ok");
+
+      rejectSlow(
+        new Error("Connection closed due to idle timeout (300 seconds)"),
+      );
+      await pSlow;
+
+      expect(useFileBrowserStore.getState().connectedHostId).toBe(1);
+      expect(useFileBrowserStore.getState().remotePath).toBe("/ok");
     });
 
     it("连接断开错误时清除连接状态", async () => {
