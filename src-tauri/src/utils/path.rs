@@ -63,6 +63,43 @@ pub fn normalize_path_for_create(path: &str) -> Result<PathBuf, String> {
     }
 }
 
+/// 拼接远程 POSIX 路径。父目录为 `/` 时不能用 `trim_end_matches('/')` 后直接判空，否则会丢掉根前缀，
+/// 变成相对路径（如只得到 `home` 而非 `/home`），导致 SFTP 列目录失败。
+pub fn join_remote_path(parent: &str, name: &str) -> String {
+    let name = name.trim_start_matches('/');
+    let parent = parent.trim_end_matches('/');
+    if parent.is_empty() {
+        format!("/{}", name)
+    } else {
+        format!("{}/{}", parent, name)
+    }
+}
+
+/// 远端 `LIST`/`ls`/`readdir` 返回的名称有时为绝对路径或含 `/`；列表中应展示最后一段。
+/// `ls -l` 形式的符号链接行含 `" -> "`，此时保留整段展示名以免误截取目标路径。
+pub fn remote_list_entry_display_name(raw: &str) -> String {
+    let s = raw.trim().trim_end_matches(['/', '\\']);
+    if s.is_empty() {
+        return String::new();
+    }
+    if s.contains(" -> ") {
+        return s.to_string();
+    }
+    if s.starts_with('/') || s.contains('/') {
+        return s
+            .rsplit_once('/')
+            .map(|(_, last)| last.to_string())
+            .unwrap_or_else(|| s.to_string());
+    }
+    if s.contains('\\') {
+        return s
+            .rsplit_once('\\')
+            .map(|(_, last)| last.to_string())
+            .unwrap_or_else(|| s.to_string());
+    }
+    s.to_string()
+}
+
 /// 校验文件名，防止路径遍历（拒绝 ".."、"/"、"\"）
 pub fn sanitize_filename(name: &str) -> Result<String, String> {
     if name.is_empty() {
@@ -212,5 +249,41 @@ mod tests {
 
         assert!(safe_join(&base, "../etc").is_err());
         assert!(safe_join(&base, "..").is_err());
+    }
+
+    #[test]
+    fn test_join_remote_path() {
+        assert_eq!(join_remote_path("/home/u", "a.txt"), "/home/u/a.txt");
+        assert_eq!(join_remote_path("/home/u/", "b"), "/home/u/b");
+        assert_eq!(join_remote_path("/", "etc"), "/etc");
+        assert_eq!(join_remote_path("//", "tmp"), "/tmp");
+        assert_eq!(join_remote_path("", "x"), "/x");
+    }
+
+    #[test]
+    fn test_remote_list_entry_display_name_plain() {
+        assert_eq!(remote_list_entry_display_name("subdir"), "subdir");
+        assert_eq!(remote_list_entry_display_name("my file.txt"), "my file.txt");
+    }
+
+    #[test]
+    fn test_remote_list_entry_display_name_absolute() {
+        assert_eq!(
+            remote_list_entry_display_name("/home/user/myproject"),
+            "myproject"
+        );
+    }
+
+    #[test]
+    fn test_remote_list_entry_display_name_relative_segments() {
+        assert_eq!(remote_list_entry_display_name("a/b"), "b");
+    }
+
+    #[test]
+    fn test_remote_list_entry_display_name_symlink_preserves_arrow() {
+        assert_eq!(
+            remote_list_entry_display_name("link -> /abs/target"),
+            "link -> /abs/target"
+        );
     }
 }

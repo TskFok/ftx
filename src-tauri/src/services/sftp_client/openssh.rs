@@ -8,9 +8,7 @@ use std::process::{Command, Stdio};
 
 use uuid::Uuid;
 
-use crate::utils::path::expand_tilde_path;
-
-use super::common::{join_remote_path};
+use crate::utils::path::{expand_tilde_path, join_remote_path, remote_list_entry_display_name};
 use crate::services::connection::{ConnectionTrait, FileEntry};
 
 const ASKPASS_ENV: &str = "SSH_PASSPHRASE_FTX";
@@ -22,7 +20,9 @@ fn parse_long_ls_line(line: &str) -> Option<(String, bool, u64, Option<String>)>
         return None;
     }
     let first = line.chars().next()?;
-    if first != 'd' && first != '-' && first != 'l' {
+    // `ls -l` 首字符：目录/文件/链接外，FIFO(p) 与套接字(s) 也是合法类型且含数值 size 列。
+    // 仅识别 d、-、l 时会把这些行当作非 listing，`file_exists` 恒为 false，导致同名上传不弹确认。
+    if !matches!(first, 'd' | '-' | 'l' | 'p' | 's') {
         return None;
     }
     let parts: Vec<&str> = line.split_whitespace().collect();
@@ -42,6 +42,40 @@ fn parse_long_ls_line(line: &str) -> Option<(String, bool, u64, Option<String>)>
 fn quote_sftp_token(p: &str) -> String {
     let escaped = p.replace('\\', "\\\\").replace('"', "\\\"");
     format!("\"{}\"", escaped)
+}
+
+/// `ls -ld` 合并 stdout/stderr 中的一行是否表示 stat 失败（文件不存在、无权访问等）。
+fn ls_ld_line_indicates_stat_failure(line: &str) -> bool {
+    let lower = line.to_lowercase();
+    lower.contains("no such file")
+        || lower.contains("not found")
+        || lower.contains("couldn't stat")
+        || lower.contains("cannot access")
+        || lower.contains("cannot stat")
+        || lower.contains("permission denied")
+        || line.contains("没有那个文件")
+        || line.contains("无法访问")
+        || line.contains("权限不够")
+}
+
+/// `ls -ld` 的输出中：仅当存在可解析的 `ls -l` 长格式行且目标非目录时，才算「已存在同名文件」。
+/// 不可将 `sftp>` 回显、`ls -ld ...` 命令行等非 listing 行误认为文件元数据（旧逻辑用首字符
+/// `!= 'd'` 会把 `l`/`s` 开头的行当成普通文件，导致误弹覆盖确认）。
+fn ls_ld_target_is_conflicting_file(out: &str) -> bool {
+    let mut listing: Option<bool> = None;
+    for line in out.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with("total ") {
+            continue;
+        }
+        if ls_ld_line_indicates_stat_failure(line) {
+            return false;
+        }
+        if let Some((_, is_dir, _, _)) = parse_long_ls_line(line) {
+            listing = Some(!is_dir);
+        }
+    }
+    listing.unwrap_or(false)
 }
 
 fn sftp_endpoint(username: &str, host: &str) -> String {
@@ -193,9 +227,13 @@ impl SftpClient {
         let mut files = Vec::new();
         for line in output.lines() {
             if let Some((name, is_dir, size, modified)) = parse_long_ls_line(line) {
-                let full_path = join_remote_path(parent, &name);
+                let display = remote_list_entry_display_name(&name);
+                if display.is_empty() || display == "." || display == ".." {
+                    continue;
+                }
+                let full_path = join_remote_path(parent, &display);
                 files.push(FileEntry {
-                    name,
+                    name: display,
                     path: full_path,
                     is_dir,
                     size,
@@ -258,18 +296,21 @@ impl ConnectionTrait for SftpClient {
         let q = quote_sftp_token(path);
         match self.run_batch(&format!("ls -ld {q}\n")) {
             Ok(out) => {
-                if out.contains("No such file")
-                    || out.contains("not found")
-                    || out.contains("Couldn't stat")
-                {
+                if out.lines().any(|l| ls_ld_line_indicates_stat_failure(l.trim())) {
                     Ok(false)
                 } else {
-                    Ok(true)
+                    Ok(ls_ld_target_is_conflicting_file(&out))
                 }
             }
             Err(e) => {
                 let el = e.to_lowercase();
-                if el.contains("no such file") || el.contains("couldn't stat") {
+                if el.contains("no such file")
+                    || el.contains("couldn't stat")
+                    || el.contains("cannot access")
+                    || el.contains("permission denied")
+                    || e.contains("没有那个文件")
+                    || e.contains("无法访问")
+                {
                     Ok(false)
                 } else {
                     Err(e)
@@ -390,7 +431,59 @@ impl ConnectionTrait for SftpClient {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_long_ls_line;
+    use super::{ls_ld_target_is_conflicting_file, parse_long_ls_line};
+
+    #[test]
+    fn test_ls_ld_target_is_conflicting_file_regular() {
+        assert!(ls_ld_target_is_conflicting_file(
+            "-rw-r--r-- 1 u g 1 Jan 1 12:00 x.txt"
+        ));
+    }
+
+    #[test]
+    fn test_ls_ld_target_is_conflicting_file_symlink() {
+        assert!(ls_ld_target_is_conflicting_file(
+            "lrwxrwxrwx 1 u g 3 Jan 1 12:00 x -> y"
+        ));
+    }
+
+    #[test]
+    fn test_ls_ld_target_is_conflicting_file_dir_not_conflict() {
+        assert!(!ls_ld_target_is_conflicting_file(
+            "drwxr-xr-x 2 u g 64 Jan 1 12:00 mydir"
+        ));
+    }
+
+    #[test]
+    fn test_ls_ld_target_is_conflicting_file_missing() {
+        assert!(!ls_ld_target_is_conflicting_file(
+            "ls: /no/such: No such file or directory"
+        ));
+    }
+
+    #[test]
+    fn test_ls_ld_target_is_conflicting_file_chinese_missing() {
+        assert!(!ls_ld_target_is_conflicting_file(
+            "ls: /no/such: 没有那个文件或目录"
+        ));
+    }
+
+    /// 批处理输出里常带有 `sftp>` 或命令行；旧逻辑把首字符 `l`/`s` 当成 listing，会误报「文件已存在」。
+    #[test]
+    fn test_ls_ld_target_ignores_sftp_prompt_and_command_echo() {
+        assert!(!ls_ld_target_is_conflicting_file(
+            "sftp> ls -ld \"/tmp/missing.txt\""
+        ));
+        assert!(!ls_ld_target_is_conflicting_file("ls -ld \"/tmp/missing.txt\""));
+    }
+
+    #[test]
+    fn test_ls_ld_target_echo_then_listing_still_conflict() {
+        assert!(ls_ld_target_is_conflicting_file(concat!(
+            "sftp> ls -ld \"/tmp/x.txt\"\n",
+            "-rw-r--r-- 1 u g 1 Jan 1 12:00 x.txt"
+        )));
+    }
 
     #[test]
     fn test_parse_long_ls_file() {
@@ -416,6 +509,33 @@ mod tests {
         let (name, _, size, _) = parse_long_ls_line(line).unwrap();
         assert_eq!(name, "a b c.txt");
         assert_eq!(size, 1);
+    }
+
+    #[test]
+    fn test_parse_long_ls_fifo() {
+        let line = "prw-r--r-- 1 user staff 0 May 6 12:00 myfifo";
+        let (name, is_dir, size, _) = parse_long_ls_line(line).unwrap();
+        assert_eq!(name, "myfifo");
+        assert!(!is_dir);
+        assert_eq!(size, 0);
+    }
+
+    #[test]
+    fn test_parse_long_ls_socket() {
+        let line = "srwxr-xr-x 1 user staff 0 May 6 12:00 sock";
+        let (name, is_dir, size, _) = parse_long_ls_line(line).unwrap();
+        assert_eq!(name, "sock");
+        assert!(!is_dir);
+        assert_eq!(size, 0);
+    }
+
+    #[test]
+    fn test_ls_ld_fifo_is_conflicting_file() {
+        let out = concat!(
+            "sftp> ls -ld \"/tmp/myfifo\"\n",
+            "prw-r--r-- 1 u g 0 May 6 12:00 myfifo\n"
+        );
+        assert!(ls_ld_target_is_conflicting_file(out));
     }
 
     #[test]

@@ -190,7 +190,7 @@ pub fn get_resume_records(
 #[tauri::command]
 pub fn check_local_file_exists(path: String) -> Result<bool, String> {
     let safe_path = normalize_path_for_create(&path)?;
-    Ok(safe_path.exists())
+    Ok(safe_path.is_file())
 }
 
 #[tauri::command]
@@ -400,5 +400,25 @@ mod tests {
     fn test_collect_local_dir_entries_nonexistent() {
         let result = collect_local_dir_entries("/nonexistent/path/xyz", "/remote/dir");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_check_local_file_exists_file_vs_dir() {
+        let temp = std::env::temp_dir().join("ftx_test_local_exists");
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(temp.join("subdir")).unwrap();
+        std::fs::write(temp.join("subdir/file.txt"), "x").unwrap();
+        std::fs::create_dir_all(temp.join("subdir/onlydir")).unwrap();
+
+        let file_path = temp.join("subdir/file.txt").to_string_lossy().to_string();
+        assert!(check_local_file_exists(file_path).unwrap());
+
+        let missing_path = temp.join("subdir/nope.dat").to_string_lossy().to_string();
+        assert!(!check_local_file_exists(missing_path).unwrap());
+
+        let dir_path = temp.join("subdir/onlydir").to_string_lossy().to_string();
+        assert!(!check_local_file_exists(dir_path).unwrap());
+
+        let _ = std::fs::remove_dir_all(&temp);
     }
 }

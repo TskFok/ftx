@@ -6,6 +6,7 @@ import { useFileBrowserStore } from "../../stores/fileBrowserStore";
 import { useTransferStore } from "../../stores/transferStore";
 import { useOverwriteStore } from "../../stores/overwriteStore";
 import { isConnectionError } from "../../utils/connectionError";
+import { remoteDirListsFileNamed } from "../../utils/remoteUploadConflict";
 
 const TransferActionBar: React.FC = () => {
   const {
@@ -82,10 +83,12 @@ const TransferActionBar: React.FC = () => {
         : `${remotePath}/${file.name}`;
 
       try {
-        const exists = await invoke<boolean>("remote_file_exists", {
+        const backendExists = await invoke<boolean>("remote_file_exists", {
           hostId: connectedHostId,
           path: remoteFilePath,
         });
+        const exists =
+          backendExists || remoteDirListsFileNamed(remoteFiles, file.name);
 
         if (exists) {
           const action = await showDialog({
@@ -135,6 +138,7 @@ const TransferActionBar: React.FC = () => {
     handleConnectionError,
     selectedLocalFiles,
     localFiles,
+    remoteFiles,
     remotePath,
     startUpload,
     startDirectoryUpload,

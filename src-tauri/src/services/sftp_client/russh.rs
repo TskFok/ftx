@@ -4,7 +4,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::pin::Pin;
 use std::sync::Arc;
 
-use crate::utils::path::expand_tilde_path;
+use crate::utils::path::{expand_tilde_path, join_remote_path, remote_list_entry_display_name};
 use russh::client::{self, Config, Handle};
 use russh::keys::known_hosts::learn_known_hosts;
 use russh::keys::{
@@ -17,7 +17,7 @@ use russh_sftp::client::RawSftpSession;
 use russh_sftp::extensions;
 use russh_sftp::protocol::{Data, FileAttributes, OpenFlags, Status, StatusCode};
 
-use super::common::{fmt_mtime, join_remote_path};
+use super::common::fmt_mtime;
 use crate::services::connection::{ConnectionTrait, FileEntry};
 
 /// SFTP 单包读/写上限（与 russh_sftp 内置默认值对齐；可通过 limits@openssh.com 下调）。
@@ -356,10 +356,14 @@ impl ConnectionTrait for SftpClient {
                         if fname == "." || fname == ".." {
                             continue;
                         }
-                        let full_path = join_remote_path(path, &fname);
+                        let display_name = remote_list_entry_display_name(&fname);
+                        if display_name == "." || display_name == ".." || display_name.is_empty() {
+                            continue;
+                        }
+                        let full_path = join_remote_path(path, &display_name);
                         let is_dir = f.attrs.is_dir();
                         files.push(FileEntry {
-                            name: fname,
+                            name: display_name,
                             path: full_path,
                             is_dir,
                             size: f.attrs.size.unwrap_or(0),
@@ -392,7 +396,7 @@ impl ConnectionTrait for SftpClient {
     fn file_exists(&mut self, path: &str) -> Result<bool, String> {
         let session = self.require_session()?;
         match self.runtime.block_on(session.stat(path)) {
-            Ok(_) => Ok(true),
+            Ok(meta) => Ok(!meta.attrs.is_dir()),
             Err(SftpError::Status(s)) if s.status_code == StatusCode::NoSuchFile => Ok(false),
             Err(e) => Err(e.to_string()),
         }

@@ -90,11 +90,9 @@ impl ConnectionTrait for FtpClient {
     }
 
     fn file_exists(&mut self, path: &str) -> Result<bool, String> {
-        let stream = self.stream.as_mut().ok_or("Not connected")?;
-        match stream.size(path) {
-            Ok(_) => Ok(true),
-            Err(_) => Ok(false),
-        }
+        let (parent, name) = ftp_remote_parent_and_filename(path)?;
+        let entries = self.list_dir(parent)?;
+        Ok(entries.iter().any(|e| e.name == name && !e.is_dir))
     }
 
     fn upload(
@@ -211,24 +209,45 @@ impl ConnectionTrait for FtpClient {
     }
 }
 
+fn ftp_remote_parent_and_filename(path: &str) -> Result<(&str, &str), String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("路径不能为空".to_string());
+    }
+    let trimmed = path.trim_end_matches('/');
+    if trimmed.is_empty() {
+        return Err("路径无效".to_string());
+    }
+    match trimmed.rsplit_once('/') {
+        Some(("", name)) => Ok(("/", name)),
+        Some((parent, name)) => {
+            if name.is_empty() {
+                Err("路径无效".to_string())
+            } else {
+                Ok((parent, name))
+            }
+        }
+        None => Ok((".", trimmed)),
+    }
+}
+
 fn parse_ftp_list_entry(line: &str, parent_path: &str) -> Option<FileEntry> {
+    use crate::utils::path::{join_remote_path, remote_list_entry_display_name};
+
     let parts: Vec<&str> = line.split_whitespace().collect();
     if parts.len() < 9 {
         return None;
     }
 
-    let name = parts[8..].join(" ");
-    if name == "." || name == ".." {
+    let raw_name = parts[8..].join(" ");
+    let name = remote_list_entry_display_name(&raw_name);
+    if name.is_empty() || name == "." || name == ".." {
         return None;
     }
 
     let is_dir = line.starts_with('d');
     let size: u64 = parts[4].parse().unwrap_or(0);
-    let path = if parent_path.ends_with('/') {
-        format!("{}{}", parent_path, name)
-    } else {
-        format!("{}/{}", parent_path, name)
-    };
+    let path = join_remote_path(parent_path, &name);
 
     Some(FileEntry {
         name,
@@ -242,6 +261,27 @@ fn parse_ftp_list_entry(line: &str, parent_path: &str) -> Option<FileEntry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_ftp_remote_parent_and_filename() {
+        assert_eq!(
+            ftp_remote_parent_and_filename("/home/u/a.txt").unwrap(),
+            ("/home/u", "a.txt")
+        );
+        assert_eq!(
+            ftp_remote_parent_and_filename("/a.txt").unwrap(),
+            ("/", "a.txt")
+        );
+        assert_eq!(
+            ftp_remote_parent_and_filename("rel/x.bin").unwrap(),
+            ("rel", "x.bin")
+        );
+        assert_eq!(
+            ftp_remote_parent_and_filename("/home/u/a.txt/").unwrap(),
+            ("/home/u", "a.txt")
+        );
+        assert!(ftp_remote_parent_and_filename("").is_err());
+    }
 
     #[test]
     fn test_ftp_client_new() {
@@ -282,6 +322,15 @@ mod tests {
 
         let line = "drwxr-xr-x   2 user group   4096 Jan 01 12:00 ..";
         assert!(parse_ftp_list_entry(line, "/").is_none());
+    }
+
+    #[test]
+    fn test_parse_ftp_list_entry_dir_full_path_name() {
+        let line = "drwxr-xr-x   2 user group   4096 Jan 01 12:00 /home/user/mydir";
+        let entry = parse_ftp_list_entry(line, "/home/user").unwrap();
+        assert_eq!(entry.name, "mydir");
+        assert_eq!(entry.path, "/home/user/mydir");
+        assert!(entry.is_dir);
     }
 
     #[test]
