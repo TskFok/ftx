@@ -205,6 +205,9 @@ impl TransferEngine {
         let cancel_for_progress = cancel_flag.clone();
 
         // 各连接实现传入的 transferred 为「文件内绝对已传输位置」（含断点 offset），非仅本次会话增量。
+        let cf_for_poll = cancel_flag.clone();
+        let check_cancel_for_conn = move || cf_for_poll.load(Ordering::Relaxed);
+
         let progress_fn = move |transferred: u64, _total: u64| {
             if cancel_for_progress.load(Ordering::Relaxed) {
                 return;
@@ -275,12 +278,14 @@ impl TransferEngine {
                     &task.remote_path,
                     resume_offset,
                     Some(&progress_fn),
+                    Some(&check_cancel_for_conn),
                 ),
                 TransferDirection::Download => conn_guard.download(
                     &task.remote_path,
                     &task.local_path,
                     resume_offset,
                     Some(&progress_fn),
+                    Some(&check_cancel_for_conn),
                 ),
             }
         };
@@ -451,7 +456,11 @@ mod tests {
             _remote_path: &str,
             _offset: u64,
             progress: Option<&dyn Fn(u64, u64)>,
+            is_cancelled: Option<&dyn Fn() -> bool>,
         ) -> Result<u64, String> {
+            if is_cancelled.is_some_and(|f| f()) {
+                return Err("Transfer cancelled".to_string());
+            }
             if let Some(cb) = progress {
                 cb(100, 100);
             }
@@ -463,11 +472,96 @@ mod tests {
             _local_path: &str,
             _offset: u64,
             progress: Option<&dyn Fn(u64, u64)>,
+            is_cancelled: Option<&dyn Fn() -> bool>,
         ) -> Result<u64, String> {
+            if is_cancelled.is_some_and(|f| f()) {
+                return Err("Transfer cancelled".to_string());
+            }
             if let Some(cb) = progress {
                 cb(100, 100);
             }
             Ok(100)
+        }
+        fn mkdir(&mut self, _path: &str) -> Result<(), String> {
+            Ok(())
+        }
+        fn remove_file(&mut self, _path: &str) -> Result<(), String> {
+            Ok(())
+        }
+        fn remove_dir(&mut self, _path: &str) -> Result<(), String> {
+            Ok(())
+        }
+        fn rename(&mut self, _from: &str, _to: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    struct SlowUploadMockClient {
+        connected: bool,
+    }
+
+    impl SlowUploadMockClient {
+        fn new() -> Self {
+            Self { connected: true }
+        }
+    }
+
+    impl ConnectionTrait for SlowUploadMockClient {
+        fn connect(&mut self) -> Result<(), String> {
+            self.connected = true;
+            Ok(())
+        }
+        fn disconnect(&mut self) -> Result<(), String> {
+            self.connected = false;
+            Ok(())
+        }
+        fn is_connected(&self) -> bool {
+            self.connected
+        }
+        fn list_dir(
+            &mut self,
+            _path: &str,
+        ) -> Result<Vec<crate::services::connection::FileEntry>, String> {
+            Ok(vec![])
+        }
+        fn file_size(&mut self, _path: &str) -> Result<u64, String> {
+            Ok(0)
+        }
+        fn file_exists(&mut self, _path: &str) -> Result<bool, String> {
+            Ok(true)
+        }
+        fn upload(
+            &mut self,
+            _local_path: &str,
+            _remote_path: &str,
+            _offset: u64,
+            progress: Option<&dyn Fn(u64, u64)>,
+            is_cancelled: Option<&dyn Fn() -> bool>,
+        ) -> Result<u64, String> {
+            const CHUNK: u64 = 8192;
+            let total_size = 512 * 1024_u64;
+            let mut pos = 0_u64;
+            while pos < total_size {
+                if is_cancelled.is_some_and(|f| f()) {
+                    return Err("Transfer cancelled".to_string());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                pos = (pos + CHUNK).min(total_size);
+                if let Some(cb) = progress {
+                    cb(pos, total_size);
+                }
+            }
+            Ok(total_size)
+        }
+        fn download(
+            &mut self,
+            _remote_path: &str,
+            _local_path: &str,
+            _offset: u64,
+            _progress: Option<&dyn Fn(u64, u64)>,
+            _is_cancelled: Option<&dyn Fn() -> bool>,
+        ) -> Result<u64, String> {
+            Err("SlowUploadMockClient only implements upload".to_string())
         }
         fn mkdir(&mut self, _path: &str) -> Result<(), String> {
             Ok(())
@@ -500,6 +594,15 @@ mod tests {
         let conn_manager = ConnectionManager::new();
         conn_manager
             .insert_mock_connection(1, Box::new(MockClient::new()))
+            .unwrap();
+        TransferEngine::new(conn_manager, db)
+    }
+
+    fn setup_engine_slow_upload() -> TransferEngine {
+        let db = setup_test_db();
+        let conn_manager = ConnectionManager::new();
+        conn_manager
+            .insert_mock_connection(1, Box::new(SlowUploadMockClient::new()))
             .unwrap();
         TransferEngine::new(conn_manager, db)
     }
@@ -663,6 +766,41 @@ mod tests {
             }
             if Instant::now() > deadline {
                 panic!("deadlock detected: cancelled task not cleaned up within 5s");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+
+        assert!(engine.get_active_task_ids().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_cancel_mid_slow_upload_stops_transfer() {
+        let engine = setup_engine_slow_upload();
+        let tmp = create_temp_file();
+        let local_path = tmp.path().to_str().unwrap().to_string();
+
+        let task = TransferTask::new(
+            1,
+            "slow.bin".into(),
+            local_path,
+            "/remote/slow.bin".into(),
+            "upload".into(),
+            512 * 1024,
+        );
+        let task_id = task.id.clone();
+        engine.submit_task(task).unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        let _ = engine.cancel_task(&task_id);
+
+        let deadline = Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let ids = engine.get_active_task_ids().unwrap();
+            if !ids.contains(&task_id) {
+                break;
+            }
+            if Instant::now() > deadline {
+                panic!("cancelled slow upload did not finish within 10s");
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }

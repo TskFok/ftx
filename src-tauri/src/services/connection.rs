@@ -62,6 +62,7 @@ pub trait ConnectionTrait: Send {
 
     /// Upload a file with optional resume offset and progress reporting.
     /// `progress` 的第一个参数须为文件中已传输的**绝对字节位置**（与本次调用的 `offset`/续传起点一致）。
+    /// `is_cancelled`：若返回 `true`，实现须尽快停止读写并返回错误。
     /// Returns the number of bytes transferred in this call.
     fn upload(
         &mut self,
@@ -69,10 +70,12 @@ pub trait ConnectionTrait: Send {
         remote_path: &str,
         offset: u64,
         progress: Option<&dyn Fn(u64, u64)>,
+        is_cancelled: Option<&dyn Fn() -> bool>,
     ) -> Result<u64, String>;
 
     /// Download a file with optional resume offset and progress reporting.
     /// `progress` 的第一个参数须为文件中已传输的**绝对字节位置**。
+    /// `is_cancelled`：若返回 `true`，实现须尽快停止读写并返回错误。
     /// Returns the number of bytes transferred in this call.
     fn download(
         &mut self,
@@ -80,6 +83,7 @@ pub trait ConnectionTrait: Send {
         local_path: &str,
         offset: u64,
         progress: Option<&dyn Fn(u64, u64)>,
+        is_cancelled: Option<&dyn Fn() -> bool>,
     ) -> Result<u64, String>;
 
     fn mkdir(&mut self, path: &str) -> Result<(), String>;
@@ -317,6 +321,7 @@ mod tests {
             _remote_path: &str,
             _offset: u64,
             _progress: Option<&dyn Fn(u64, u64)>,
+            _is_cancelled: Option<&dyn Fn() -> bool>,
         ) -> Result<u64, String> {
             Ok(100)
         }
@@ -327,6 +332,7 @@ mod tests {
             _local_path: &str,
             _offset: u64,
             _progress: Option<&dyn Fn(u64, u64)>,
+            _is_cancelled: Option<&dyn Fn() -> bool>,
         ) -> Result<u64, String> {
             Ok(100)
         }

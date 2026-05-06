@@ -27,10 +27,17 @@ struct ProgressReader<'a, R: Read> {
     transferred: u64,
     total: u64,
     callback: Option<&'a dyn Fn(u64, u64)>,
+    is_cancelled: Option<&'a dyn Fn() -> bool>,
 }
 
 impl<'a, R: Read> Read for ProgressReader<'a, R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.is_cancelled.is_some_and(|f| f()) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "Transfer cancelled",
+            ));
+        }
         let n = self.inner.read(buf)?;
         if n > 0 {
             self.transferred += n as u64;
@@ -101,6 +108,7 @@ impl ConnectionTrait for FtpClient {
         remote_path: &str,
         offset: u64,
         progress: Option<&dyn Fn(u64, u64)>,
+        is_cancelled: Option<&dyn Fn() -> bool>,
     ) -> Result<u64, String> {
         let stream = self.stream.as_mut().ok_or("Not connected")?;
         let metadata = std::fs::metadata(local_path).map_err(|e| e.to_string())?;
@@ -120,6 +128,7 @@ impl ConnectionTrait for FtpClient {
             transferred: offset,
             total: total_size,
             callback: progress,
+            is_cancelled,
         };
 
         let _ = stream
@@ -134,6 +143,7 @@ impl ConnectionTrait for FtpClient {
         local_path: &str,
         offset: u64,
         progress: Option<&dyn Fn(u64, u64)>,
+        is_cancelled: Option<&dyn Fn() -> bool>,
     ) -> Result<u64, String> {
         let stream = self.stream.as_mut().ok_or("Not connected")?;
         let total_size = stream
@@ -165,6 +175,11 @@ impl ConnectionTrait for FtpClient {
             .retr(remote_path, |reader| {
                 let mut buf = [0u8; CHUNK_SIZE];
                 loop {
+                    if is_cancelled.is_some_and(|f| f()) {
+                        return Err(suppaftp::types::FtpError::ConnectionError(
+                            std::io::Error::new(std::io::ErrorKind::Interrupted, "cancelled"),
+                        ));
+                    }
                     let n = reader
                         .read(&mut buf)
                         .map_err(suppaftp::types::FtpError::ConnectionError)?;
@@ -363,6 +378,7 @@ mod tests {
             transferred: 0,
             total: data.len() as u64,
             callback: Some(&callback),
+            is_cancelled: None,
         };
 
         let mut buf = [0u8; 5];
@@ -386,6 +402,24 @@ mod tests {
     }
 
     #[test]
+    fn test_progress_reader_aborts_when_cancelled() {
+        let data = b"hello world";
+        let cancel = || true;
+
+        let mut reader = ProgressReader {
+            inner: &data[..],
+            transferred: 0,
+            total: data.len() as u64,
+            callback: None,
+            is_cancelled: Some(&cancel),
+        };
+
+        let mut buf = [0u8; 5];
+        let err = reader.read(&mut buf).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::Interrupted);
+    }
+
+    #[test]
     fn test_progress_reader_no_callback() {
         let data = b"test";
         let mut reader = ProgressReader {
@@ -393,6 +427,7 @@ mod tests {
             transferred: 0,
             total: data.len() as u64,
             callback: None,
+            is_cancelled: None,
         };
 
         let mut buf = [0u8; 10];
@@ -409,6 +444,7 @@ mod tests {
             transferred: 100,
             total: 114,
             callback: None,
+            is_cancelled: None,
         };
 
         let mut buf = [0u8; 256];

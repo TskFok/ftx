@@ -125,6 +125,7 @@ async fn pipeline_download(
     total_size: u64,
     max_read: u32,
     progress: Option<&dyn Fn(u64, u64)>,
+    is_cancelled: Option<&dyn Fn() -> bool>,
 ) -> Result<u64, String> {
     let mut off = start_offset;
     let mut transferred: u64 = 0;
@@ -132,6 +133,9 @@ async fn pipeline_download(
         Some(Box::pin(session.read(handle.clone(), off, max_read)));
 
     while let Some(fut) = pending.take() {
+        if is_cancelled.is_some_and(|f| f()) {
+            return Err("Transfer cancelled".to_string());
+        }
         let packet = fut.await.map_err(|e| e.to_string())?;
         let data = packet.data;
         let n = data.len() as u32;
@@ -172,7 +176,11 @@ async fn pipeline_upload(
     total_size: u64,
     max_write: u32,
     progress: Option<&dyn Fn(u64, u64)>,
+    is_cancelled: Option<&dyn Fn() -> bool>,
 ) -> Result<u64, String> {
+    if is_cancelled.is_some_and(|f| f()) {
+        return Err("Transfer cancelled".to_string());
+    }
     let mut write_off = start_offset;
     let mut buf = vec![0u8; max_write as usize];
     let n = local_file
@@ -194,6 +202,9 @@ async fn pipeline_upload(
     }
 
     while let Some(fut) = pending.take() {
+        if is_cancelled.is_some_and(|f| f()) {
+            return Err("Transfer cancelled".to_string());
+        }
         let mut next_buf = vec![0u8; max_write as usize];
         let n2 = local_file
             .read(&mut next_buf)
@@ -210,6 +221,10 @@ async fn pipeline_upload(
         };
 
         fut.await.map_err(|e| e.to_string())?;
+
+        if is_cancelled.is_some_and(|f| f()) {
+            return Err("Transfer cancelled".to_string());
+        }
 
         if let Some(f) = next_fut {
             pending = Some(f);
@@ -408,6 +423,7 @@ impl ConnectionTrait for SftpClient {
         remote_path: &str,
         offset: u64,
         progress: Option<&dyn Fn(u64, u64)>,
+        is_cancelled: Option<&dyn Fn() -> bool>,
     ) -> Result<u64, String> {
         let session = self.require_session()?.clone();
         let metadata = fs::metadata(local_path).map_err(|e| e.to_string())?;
@@ -450,6 +466,7 @@ impl ConnectionTrait for SftpClient {
             total_size,
             max_w,
             progress,
+            is_cancelled,
         ))?;
 
         self.runtime
@@ -465,6 +482,7 @@ impl ConnectionTrait for SftpClient {
         local_path: &str,
         offset: u64,
         progress: Option<&dyn Fn(u64, u64)>,
+        is_cancelled: Option<&dyn Fn() -> bool>,
     ) -> Result<u64, String> {
         let session = self.require_session()?.clone();
         let meta = self
@@ -503,6 +521,7 @@ impl ConnectionTrait for SftpClient {
             total_size,
             self.max_payload,
             progress,
+            is_cancelled,
         ))?;
 
         self.runtime
