@@ -61,6 +61,7 @@ pub trait ConnectionTrait: Send {
     fn file_exists(&mut self, path: &str) -> Result<bool, String>;
 
     /// Upload a file with optional resume offset and progress reporting.
+    /// `progress` 的第一个参数须为文件中已传输的**绝对字节位置**（与本次调用的 `offset`/续传起点一致）。
     /// Returns the number of bytes transferred in this call.
     fn upload(
         &mut self,
@@ -71,6 +72,7 @@ pub trait ConnectionTrait: Send {
     ) -> Result<u64, String>;
 
     /// Download a file with optional resume offset and progress reporting.
+    /// `progress` 的第一个参数须为文件中已传输的**绝对字节位置**。
     /// Returns the number of bytes transferred in this call.
     fn download(
         &mut self,

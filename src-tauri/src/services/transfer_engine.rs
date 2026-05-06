@@ -204,15 +204,17 @@ impl TransferEngine {
         let direction_c = direction.clone();
         let cancel_for_progress = cancel_flag.clone();
 
+        // 各连接实现传入的 transferred 为「文件内绝对已传输位置」（含断点 offset），非仅本次会话增量。
         let progress_fn = move |transferred: u64, _total: u64| {
             if cancel_for_progress.load(Ordering::Relaxed) {
                 return;
             }
 
             let elapsed = start_time.elapsed().as_secs_f64();
-            let effective_transferred = resume_offset + transferred;
+            let effective_transferred = transferred.min(total_bytes);
+            let session_bytes = effective_transferred.saturating_sub(resume_offset);
             let speed = if elapsed > 0.0 {
-                transferred as f64 / elapsed
+                session_bytes as f64 / elapsed
             } else {
                 0.0
             };
@@ -666,5 +668,29 @@ mod tests {
         }
 
         assert!(engine.get_active_task_ids().unwrap().is_empty());
+    }
+
+    /// 与 execute_task 内 progress 回调一致：progress 传入绝对偏移，速度按本次会话字节数估算。
+    #[test]
+    fn test_progress_absolute_offset_session_speed() {
+        let total_bytes = 1000_u64;
+        let resume_offset = 200_u64;
+        let transferred_abs = 500_u64;
+        let elapsed = 2.0_f64;
+
+        let effective_transferred = transferred_abs.min(total_bytes);
+        let session_bytes = effective_transferred.saturating_sub(resume_offset);
+        let speed = session_bytes as f64 / elapsed;
+
+        assert_eq!(effective_transferred, 500);
+        assert_eq!(session_bytes, 300);
+        assert_eq!(speed, 150.0);
+
+        let remaining = if speed > 0.0 && total_bytes > effective_transferred {
+            (total_bytes - effective_transferred) as f64 / speed
+        } else {
+            0.0
+        };
+        assert!((remaining - 500.0 / 150.0).abs() < f64::EPSILON);
     }
 }

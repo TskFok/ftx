@@ -31,9 +31,7 @@ aes-gcm = "0.10"
 base64 = "0.22"
 rand = "0.8"
 dirs = "5"
-
-[target.'cfg(not(target_os = "macos"))'.dependencies]
-# Windows/Linux：纯 Rust SSH/SFTP，避免部分环境下 WINCNG 等问题。macOS 使用系统 OpenSSH（见 sftp_client/openssh.rs）。
+# 全平台使用纯 Rust SSH/SFTP，上传/下载可流式上报进度。macOS 若仅用系统 `sftp -b` 批处理则无法在传输过程中回调进度。
 russh = { version = "0.58", default-features = false, features = ["ring", "flate2", "rsa"] }
 russh-sftp = "2.1"
 
